@@ -2,111 +2,127 @@
 Athenaeum — a local desktop chatbot front end for a local Ollama model.
 
 Run it directly with:  python app.py
-Or package it (see README).
+It starts a small Flask API on 127.0.0.1:5005 and opens a native desktop
+window (via pywebview) pointing at it. No data leaves your machine.
 """
 
+import json
 import os
 import sys
-import json
 import threading
-import webview
-from flask import Flask, request, jsonify, render_template, send_from_directory
-import requests
-from memory import MemoryManager
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-DEFAULT_MODEL = "qwen3:7b"
+import requests
+import webview
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+
+from memory import ConversationMemory
+
 OLLAMA_BASE = "http://localhost:11434"
-HOST = "127.0.0.1"
-PORT = 5000
+DEFAULT_MODEL = "qwen3:7b"
+PORT = 5005
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
-memory = MemoryManager()
+memory = ConversationMemory()
 
-# ---------------------------------------------------------------------------
-# Flask routes
-# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
+
 @app.route("/api/models")
-def list_models():
+def models():
     try:
-        r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
+        r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=2)
         r.raise_for_status()
-        models = [m["name"] for m in r.json().get("models", [])]
-        return jsonify({"models": models, "default": DEFAULT_MODEL})
+        names = [m["name"] for m in r.json().get("models", [])]
+        return jsonify({"ok": True, "models": names, "default": DEFAULT_MODEL})
     except Exception as e:
-        return jsonify({"models": [DEFAULT_MODEL], "default": DEFAULT_MODEL, "error": str(e)})
+        return jsonify({"ok": False, "models": [DEFAULT_MODEL], "default": DEFAULT_MODEL, "error": str(e)})
+
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
     data = request.get_json(force=True) or {}
     model = data.get("model") or DEFAULT_MODEL
     messages = data.get("messages") or []
-    images = data.get("images")  # list of base64 strings, optional
+    stream = data.get("stream", True)
 
-    # Inject memory context
-    system_prompt = memory.get_system_prompt()
-    ollama_messages = [{"role": "system", "content": system_prompt}]
+    system = memory.build_system_prompt()
+    ollama_msgs = [{"role": "system", "content": system}]
     for m in messages:
-        msg = {"role": m["role"], "content": m.get("content", "")}
+        entry = {"role": m["role"], "content": m.get("content", "")}
         if m.get("images"):
-            msg["images"] = m["images"]
-        ollama_messages.append(msg)
+            entry["images"] = m["images"]
+        ollama_msgs.append(entry)
 
-    payload = {
-        "model": model,
-        "messages": ollama_messages,
-        "stream": False,
-    }
-    try:
-        r = requests.post(f"{OLLAMA_BASE}/api/chat", json=payload, timeout=300)
-        r.raise_for_status()
-        reply = r.json()["message"]["content"]
-        # Record turn in memory
-        if messages:
-            user_msg = messages[-1].get("content", "")
-            memory.add_turn(user_msg, reply)
-        return jsonify({"reply": reply})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    payload = {"model": model, "messages": ollama_msgs, "stream": stream}
 
-@app.route("/api/memory", methods=["GET"])
-def get_memory():
-    return jsonify(memory.to_dict())
+    if not stream:
+        try:
+            r = requests.post(f"{OLLAMA_BASE}/api/chat", json=payload, timeout=300)
+            r.raise_for_status()
+            reply = r.json()["message"]["content"]
+            if messages:
+                memory.record(messages[-1].get("content", ""), reply)
+            return jsonify({"reply": reply})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    def generate():
+        try:
+            with requests.post(f"{OLLAMA_BASE}/api/chat", json=payload, stream=True, timeout=300) as r:
+                r.raise_for_status()
+                full = []
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if "message" in chunk and "content" in chunk["message"]:
+                        token = chunk["message"]["content"]
+                        full.append(token)
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+                    if chunk.get("done"):
+                        break
+                reply = "".join(full)
+                if messages:
+                    memory.record(messages[-1].get("content", ""), reply)
+                yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
 
 @app.route("/api/memory/new", methods=["POST"])
-def new_conversation():
+def new_chat():
     memory.end_conversation()
     return jsonify({"ok": True})
 
+
 @app.route("/api/memory/history")
 def history():
-    return jsonify(memory.get_history())
+    return jsonify(memory.history())
 
-# ---------------------------------------------------------------------------
-# Desktop window
-# ---------------------------------------------------------------------------
 
-def start_server():
-    app.run(host=HOST, port=PORT, threaded=True, use_reloader=False)
+def on_window_closing():
+    memory.end_conversation()
 
-def main():
-    t = threading.Thread(target=start_server, daemon=True)
-    t.start()
-    webview.create_window(
-        "Athenaeum",
-        f"http://{HOST}:{PORT}",
-        width=900,
-        height=700,
-        resizable=True,
-    )
-    webview.start()
+
+def run_flask():
+    app.run(host="127.0.0.1", port=PORT, threaded=True, use_reloader=False)
+
 
 if __name__ == "__main__":
-    main()
+    t = threading.Thread(target=run_flask, daemon=True)
+    t.start()
+    window = webview.create_window(
+        "Athenaeum",
+        f"http://127.0.0.1:{PORT}",
+        width=920,
+        height=740,
+        min_size=(640, 520),
+        background_color="#000000",
+    )
+    window.events.closing += on_window_closing
+    webview.start()
