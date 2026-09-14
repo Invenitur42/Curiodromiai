@@ -1,3 +1,10 @@
+Continuation Notes:
+   - Make the response text smoother when its coming in
+   - Rename the project Curiodrimiai
+   - Make a front end that can be accessible on mobile
+
+
+
 # Athenaeum — local chatbot front end
 
 A small desktop app: Flask backend + a plain HTML/CSS/JS chat UI, wrapped in a
