@@ -3,47 +3,130 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Athenaeum</title>
+<title>Curiodromiai</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <div id="app">
-    <header>
-      <button id="menu-btn" title="Menu" aria-label="Menu">
-        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2c-2 4-4 6-4 10a4 4 0 008 0c0-4-2-6-4-10z"/>
-          <path d="M12 12v10"/>
-        </svg>
-      </button>
-      <h1>Athenaeum</h1>
-      <button id="new-chat-btn" title="New Chat">New Chat</button>
-    </header>
-    <aside id="sidebar">
-      <div id="history"></div>
+  <div class="shell">
+
+    <!-- Pull tab: opens the side panel (history + settings) -->
+    <button type="button" id="panel-pull-tab" class="pull-tab" aria-label="Open history and settings" title="History &amp; settings">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 6l6 6-6 6"/>
+      </svg>
+    </button>
+
+    <!-- Side panel: history + settings -->
+    <aside id="side-panel" class="side-panel">
+      <div class="side-panel-header">
+        <span class="side-panel-title">History &amp; Settings</span>
+        <a id="logout-link" class="text-btn logout-link" href="/logout" hidden>Log out</a>
+        <button type="button" id="panel-close-btn" class="icon-btn panel-close" aria-label="Close panel">✕</button>
+      </div>
+
+      <div class="side-panel-body">
+        <section class="panel-section">
+          <div class="panel-section-title">Model</div>
+          <select id="model-select" class="model-select">
+            <option value="{{ default_model }}">{{ default_model }}</option>
+          </select>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-title">Library (RAG)</div>
+          <div class="rag-ingest-row">
+            <input type="text" id="rag-folder-input" class="rag-folder-input" placeholder="Path to your books folder">
+            <button type="button" id="rag-index-btn" class="rag-index-btn">Index</button>
+          </div>
+          <p id="rag-status" class="rag-status"></p>
+          <div id="rag-sources-list" class="rag-sources-list">
+            <p class="conversations-empty">No documents indexed yet.</p>
+          </div>
+        </section>
+
+        <section class="panel-section conversations-section">
+          <div class="panel-section-title-row">
+            <div class="panel-section-title">Past conversations</div>
+            <button type="button" id="clear-conversations-btn" class="text-btn" title="Delete all conversation history">Clear all</button>
+          </div>
+          <div id="conversations-list" class="conversations-list">
+            <p class="conversations-empty">Nothing archived yet.</p>
+          </div>
+        </section>
+      </div>
     </aside>
-    <main>
-      <div id="chat">
-        <div id="empty-state">
-          <p>Start a conversation</p>
+    <div id="panel-scrim" class="panel-scrim"></div>
+
+    <!-- Main chat column -->
+    <div class="app">
+      <header class="app-header">
+        <div class="header-left">
+          <button type="button" id="new-chat-btn" class="icon-btn" aria-label="New chat" title="New chat">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
         </div>
+
+        <div class="header-center">
+          <button type="button" id="tone-btn" class="icon-btn logo-btn" aria-haspopup="true" aria-expanded="false" title="Response tone">
+            <svg viewBox="0 0 100 100" class="logo-svg logo-svg-small">
+              <path d="M 50 50 C 50 42 60 42 60 50 C 60 64 40 64 40 50 C 40 26 76 26 76 50 C 76 82 24 82 24 50 C 24 10 88 10 88 50"
+                    fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div id="tone-dropdown" class="tone-dropdown hidden" role="menu" aria-label="Response tone">
+            <button type="button" class="tone-menu-option" data-tone="empathetic" role="menuitemradio">Empathetic</button>
+            <button type="button" class="tone-menu-option" data-tone="factual" role="menuitemradio">Factual</button>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <button type="button" id="exit-btn" class="icon-btn exit-btn" aria-label="Exit app" title="Exit app">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6L6 18"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="continuing-banner" class="continuing-banner" hidden>
+        <span id="continuing-banner-text"></span>
+        <button type="button" id="continuing-banner-dismiss" class="continuing-banner-dismiss" aria-label="Dismiss">✕</button>
       </div>
-      <div id="attachments"></div>
-      <div id="input-bar">
-        <button id="attach-btn" title="Attach file">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M12 2l3 6h6l-4.5 4.5L18 20l-6-3.5L6 20l1.5-7.5L3 8h6z"/>
+
+      <main id="chat" class="chat" aria-live="polite">
+        <div class="empty-state" id="empty-state">
+          <p>Nothing said yet. Ask a question to begin.</p>
+        </div>
+      </main>
+
+      <div id="attachments-row" class="attachments-row" hidden></div>
+
+      <form id="chat-form" class="input-bar">
+        <input type="file" id="file-input" class="file-input-hidden"
+               accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.csv,.json,.log,.pdf,.doc,.docx"
+               multiple hidden>
+        <button type="button" id="file-import-btn" class="icon-btn attach-btn" aria-label="Attach file" title="Attach a document or image">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="4" y="4" width="16" height="16" rx="3"/>
           </svg>
         </button>
-        <input type="file" id="file-input" multiple accept="image/*,.txt,.md,.csv,.json,.log,.pdf,.doc,.docx" hidden>
-        <textarea id="input" rows="1" placeholder="Message..."></textarea>
-        <button id="send-btn" title="Send">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+        <textarea
+          id="chat-input"
+          placeholder="Type a message…"
+          rows="1"
+        ></textarea>
+        <button type="submit" id="send-btn" aria-label="Send message">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M5 3 L21 12 L5 21 Z"/>
           </svg>
         </button>
-      </div>
-    </main>
+      </form>
+      <p id="status" class="status" role="status"></p>
+    </div>
   </div>
+
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
